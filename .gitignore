@@ -1,5 +1,7 @@
 # Credentials — never commit
 .env
+src/env_credentials.h
+*.json
 
 # PlatformIO build artifacts
 .pio/

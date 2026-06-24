@@ -3,8 +3,11 @@
 
 #include <Arduino.h>
 #include <SPI.h>
-#include <XPT2046_Touchscreen.h>
 #include "config.h"
+
+#if TOUCH_SCREEN_ENABLED
+#include <XPT2046_Touchscreen.h>
+#endif
 
 struct TouchPoint {
   int16_t x = -1;
@@ -13,7 +16,9 @@ struct TouchPoint {
 };
 
 class TouchManager {
+#if TOUCH_SCREEN_ENABLED
   XPT2046_Touchscreen ts;
+#endif
   const DisplayConfig& cfg;
   TouchPoint lastPoint;
   unsigned long lastPollTime = 0;

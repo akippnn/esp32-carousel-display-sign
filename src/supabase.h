@@ -14,7 +14,7 @@ class SupabaseClient {
 public:
   SupabaseClient(const char* url, const char* key, const SupabaseFieldMapping& fm, uint32_t fetchMs);
 
-  bool fetch(EmployeeStore& store, int max);
+  bool fetch(EmployeeStore& store, int max, uint32_t nowEpoch = 0);
   bool shouldFetch(unsigned long now) const;
   void markFetched(unsigned long now);
   void markFailed(unsigned long now);

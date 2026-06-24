@@ -8,7 +8,12 @@
 #include "network.h"
 #include "rtc.h"
 #include "employee.h"
+
+#if DATABASE_PROVIDER_FIREBASE
+#include "firebase.h"
+#else
 #include "supabase.h"
+#endif
 
 class WebServer;
 
@@ -21,7 +26,11 @@ class App {
   RtcManager rtc;
   WifiManager wifi;
   EmployeeStore employees;
-  SupabaseClient supabase;
+#if DATABASE_PROVIDER_FIREBASE
+  FirebaseClient dbClient;
+#else
+  SupabaseClient dbClient;
+#endif
   WebServer* server;
 
   bool debugMode = false;

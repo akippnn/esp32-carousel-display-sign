@@ -1,6 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include "env_credentials.h"
 #include <Arduino.h>
 #include <ThreeWire.h>
 #include <RtcDS1302.h>
@@ -8,11 +9,13 @@
 #ifndef WIFI_SSID
   #error "WIFI_SSID not defined. Add WIFI_SSID=your_wifi to .env"
 #endif
+#if !DATABASE_PROVIDER_FIREBASE
 #ifndef SUPABASE_URL
   #error "SUPABASE_URL not defined. Ensure .env exists and load_env.py is configured in platformio.ini."
 #endif
 #ifndef SUPABASE_KEY
   #error "SUPABASE_KEY not defined. Ensure .env exists and load_env.py is configured in platformio.ini."
+#endif
 #endif
 
 static constexpr int MAX_EMPLOYEES = 10;

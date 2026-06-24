@@ -7,7 +7,7 @@
 SupabaseClient::SupabaseClient(const char* u, const char* k, const SupabaseFieldMapping& fm, uint32_t ms)
   : url(u), apiKey(k), fields(fm), interval(ms) {}
 
-bool SupabaseClient::fetch(EmployeeStore& store, int max) {
+bool SupabaseClient::fetch(EmployeeStore& store, int max, uint32_t nowEpoch) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Supabase fetch skipped: WiFi not connected");
     return false;

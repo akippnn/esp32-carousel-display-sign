@@ -1,4 +1,6 @@
 #include "ui.h"
+#include <WiFi.h>
+#include <Preferences.h>
 
 // ── UIMarquee ──────────────────────────────────────────────────────────────
 
@@ -49,10 +51,31 @@ static constexpr uint16_t COLOR_WIFI_OK = 0x07E0;        // Green
 static constexpr uint16_t COLOR_WIFI_ERR = 0xF800;       // Red
 
 UIManager::UIManager(Adafruit_ILI9341& display, const DisplayConfig& config)
-  : tft(display), cfg(config), marquee(config) {}
+  : tft(display), cfg(config), marquee(config) {
+    // Initialize text offsets cache with a marker value
+    for (int i = 0; i < 12; i++) {
+      lastOffsets[i] = 9999;
+    }
+  }
 
 void UIManager::begin() {
   tft.fillScreen(COLOR_BG);
+  
+#if TOUCH_SCREEN_ENABLED
+  // Load saved credentials if any, otherwise fall back to compiled defaults
+  Preferences prefs;
+  prefs.begin("wifi-config", true);
+  wifiInputSsid = prefs.getString("ssid", WIFI_SSID);
+  wifiInputPass = prefs.getString("password", WIFI_PASSWORD);
+  prefs.end();
+#endif
+}
+
+void UIManager::setMode(ScreenMode mode) {
+  if (currentMode != mode) {
+    currentMode = mode;
+    forceRedraw = true;
+  }
 }
 
 void UIManager::drawClockIcon(int x, int y, bool rtcConnected) {
@@ -66,6 +89,8 @@ void UIManager::drawClockIcon(int x, int y, bool rtcConnected) {
 }
 
 void UIManager::drawWifiIcon(int x, int y, int rssi, bool connected) {
+  // Clear icon background area in case of changes
+  tft.fillRect(x - 2, y - 2, 16, 16, COLOR_HEADER);
   if (!connected) {
     tft.drawLine(x, y + 12, x + 12, y, COLOR_WIFI_ERR);
     tft.drawLine(x, y, x + 12, y + 12, COLOR_WIFI_ERR);
@@ -79,35 +104,52 @@ void UIManager::drawWifiIcon(int x, int y, int rssi, bool connected) {
 }
 
 void UIManager::drawHeader(bool rtcOk, const RtcDateTime* now, bool wifiOk, int rssi) {
-  // Draw header background bar
-  tft.fillRect(0, 0, cfg.width, 30, COLOR_HEADER);
-  tft.drawFastHLine(0, 30, cfg.width, COLOR_ACCENT);
+  // Only redraw static background and divider if fully redrawing
+  if (forceRedraw) {
+    tft.fillRect(0, 0, cfg.width, 30, COLOR_HEADER);
+    tft.drawFastHLine(0, 30, cfg.width, COLOR_ACCENT);
+    drawClockIcon(10, 7, rtcOk);
+    drawWifiIcon(cfg.width - 22, 9, rssi, wifiOk);
+  }
 
-  // Draw RTC and WiFi status icons
-  drawClockIcon(10, 7, rtcOk);
-  drawWifiIcon(cfg.width - 22, 9, rssi, wifiOk);
+  // Draw WiFi status on change or refresh
+  static bool lastWifiOk = false;
+  static int lastRssi = 0;
+  if (wifiOk != lastWifiOk || abs(rssi - lastRssi) > 5 || forceRedraw) {
+    drawWifiIcon(cfg.width - 22, 9, rssi, wifiOk);
+    lastWifiOk = wifiOk;
+    lastRssi = rssi;
+  }
 
-  // Render Time and Date
-  tft.setTextSize(1);
-  tft.setTextColor(COLOR_TEXT);
-  
+  // Draw time and date if second changes
   if (rtcOk && now) {
-    char timeStr[9];
-    snprintf(timeStr, sizeof(timeStr), "%02u:%02u:%02u", now->Hour(), now->Minute(), now->Second());
-    tft.setCursor(34, 11);
-    tft.setTextSize(1);
-    tft.print(timeStr);
+    if (now->Second() != lastClockTime || forceRedraw) {
+      lastClockTime = now->Second();
 
-    static const char* months[] = {
-      "Jan","Feb","Mar","Apr","May","Jun",
-      "Jul","Aug","Sep","Oct","Nov","Dec"
-    };
-    char dateStr[16];
-    snprintf(dateStr, sizeof(dateStr), "%s %u, %04u", months[now->Month() - 1], now->Day(), now->Year());
-    int dateLen = strlen(dateStr) * 6;
-    tft.setCursor(cfg.width - 34 - dateLen, 11);
-    tft.print(dateStr);
-  } else {
+      tft.fillRect(32, 2, cfg.width - 64, 26, COLOR_HEADER); // clear text areas
+      
+      tft.setTextSize(1);
+      tft.setTextColor(COLOR_TEXT);
+      
+      char timeStr[9];
+      snprintf(timeStr, sizeof(timeStr), "%02u:%02u:%02u", now->Hour(), now->Minute(), now->Second());
+      tft.setCursor(34, 11);
+      tft.print(timeStr);
+
+      static const char* months[] = {
+        "Jan","Feb","Mar","Apr","May","Jun",
+        "Jul","Aug","Sep","Oct","Nov","Dec"
+      };
+      char dateStr[16];
+      snprintf(dateStr, sizeof(dateStr), "%s %u, %04u", months[now->Month() - 1], now->Day(), now->Year());
+      int dateLen = strlen(dateStr) * 6;
+      tft.setCursor(cfg.width - 34 - dateLen, 11);
+      tft.print(dateStr);
+    }
+  } else if (forceRedraw) {
+    tft.fillRect(32, 2, cfg.width - 64, 26, COLOR_HEADER);
+    tft.setTextSize(1);
+    tft.setTextColor(COLOR_TEXT_MUTED);
     tft.setCursor(34, 11);
     tft.print("RTC Offline");
   }
@@ -129,12 +171,8 @@ void UIManager::bootScreen(const char* status, const char* ssid) {
   tft.print(status);
 
   tft.setCursor(25, 125);
-  tft.print("Target SSID: ");
+  tft.print("SSID:   ");
   tft.print(ssid);
-
-  tft.setTextColor(COLOR_TEXT_MUTED);
-  tft.setCursor(25, 185);
-  tft.print("Initializing hardware modules...");
 }
 
 void UIManager::wifiProgress(int attempt, int max) {
@@ -164,22 +202,85 @@ void UIManager::wifiResult(bool ok, const char* ip, int rssi) {
   tft.setTextSize(1);
   tft.setTextColor(COLOR_TEXT);
   tft.setCursor(30, 95);
-  tft.printf("SSID: %s", WIFI_SSID);
-
-  tft.setCursor(30, 120);
   tft.printf("IP:   %s", ok ? ip : "N/A");
 
-  tft.setCursor(30, 145);
+  tft.setCursor(30, 120);
   tft.printf("RSSI: %d dBm", rssi);
+}
 
-  tft.setTextColor(COLOR_TEXT_MUTED);
-  tft.setCursor(30, 185);
-  tft.print("Starting main state loops...");
+// Optimized Flicker-Free Sub-Line drawing
+void drawCardLineHelper(Adafruit_ILI9341& tft, UIMarquee& marquee, int cardIdx, int lineIdx, const String& text,
+                        int textSize, int16_t cardX, int16_t cardY, int16_t cardW, int16_t lineY,
+                        uint16_t bgCol, unsigned long currentMs, int* lastOffsets) {
+  int maxTextWidth = cardW - 16;
+  int charWidth = textSize * 6;
+  int lineHeight = textSize * 8;
+  int textWidth = text.length() * charWidth;
+  int globalLineIdx = cardIdx * 3 + lineIdx;
+
+  if (textWidth <= maxTextWidth) {
+    // Static text (Centered)
+    if (lastOffsets[globalLineIdx] == 9999) {
+      lastOffsets[globalLineIdx] = 0;
+      tft.fillRect(cardX + 8, lineY, maxTextWidth, lineHeight, bgCol);
+      tft.setTextSize(textSize);
+      tft.setTextColor(lineIdx == 0 ? COLOR_TEXT : (lineIdx == 1 ? COLOR_TEXT_MUTED : COLOR_ACCENT));
+      int startX = cardX + 8 + (maxTextWidth - textWidth) / 2;
+      tft.setCursor(startX, lineY);
+      tft.print(text);
+    }
+  } else {
+    // Scrolling marquee
+    int overflow = textWidth - maxTextWidth;
+    unsigned long maxFwdMs = marquee.computeFwdMs(overflow, maxTextWidth);
+    int offset = marquee.position(textWidth, maxTextWidth, currentMs, maxFwdMs);
+
+    if (offset != lastOffsets[globalLineIdx]) {
+      lastOffsets[globalLineIdx] = offset;
+      
+      tft.fillRect(cardX + 8, lineY, maxTextWidth, lineHeight, bgCol);
+      tft.setTextSize(textSize);
+      tft.setTextColor(lineIdx == 0 ? COLOR_TEXT : (lineIdx == 1 ? COLOR_TEXT_MUTED : COLOR_ACCENT));
+      tft.setCursor(cardX + 8 + offset, lineY);
+      tft.print(text);
+
+      // Mask the margins inside the card to create a sharp clipper box
+      tft.fillRect(cardX + 1, lineY, 7, lineHeight, bgCol);
+      tft.fillRect(cardX + cardW - 8, lineY, 7, lineHeight, bgCol);
+    }
+  }
+}
+
+void UIManager::render(bool rtcOk, const RtcDateTime* now, EmployeeStore& store,
+                       unsigned long currentMs, bool wifiOk, int rssi) {
+#if TOUCH_SCREEN_ENABLED
+  if (isScanning && millis() - scanStartTime >= 4000) {
+    updateScanResults();
+  }
+
+  if (currentMode == SCREEN_WIFI_SETTINGS) {
+    drawWifiSettingsScreen();
+  } else
+#endif
+  if (currentMode == SCREEN_DEBUG) {
+    if (forceRedraw || (now && now->Second() != lastClockTime)) {
+      forceRedraw = false;
+      if (now) lastClockTime = now->Second();
+#if TOUCH_SCREEN_ENABLED
+      String activeSsid = wifiInputSsid;
+#else
+      String activeSsid = WIFI_SSID;
+#endif
+      renderDebug(rtcOk, wifiOk, rssi, activeSsid, WiFi.localIP().toString());
+    }
+  } else {
+    renderNormal(rtcOk, now, store, currentMs, wifiOk, rssi);
+  }
 }
 
 void UIManager::renderNormal(bool rtcOk, const RtcDateTime* now, EmployeeStore& store,
                             unsigned long currentMs, bool wifiOk, int rssi) {
-  // 1. Draw Header
+  // 1. Draw Header (clock and icons)
   drawHeader(rtcOk, now, wifiOk, rssi);
 
   // 2. Collect active employees
@@ -188,210 +289,163 @@ void UIManager::renderNormal(bool rtcOk, const RtcDateTime* now, EmployeeStore& 
   if (rtcOk && now) {
     uint8_t today = now->Day();
     uint16_t nowMin = now->Hour() * 60 + now->Minute();
-    activeCount = store.collectActive(today, nowMin, activeIndices, 4); // Limit to 4 cards max on screen
+    activeCount = store.collectActive(today, nowMin, activeIndices, 4);
   }
 
-  // 3. Clear the area below header if needed
-  // We will do clean over-writing instead of clearScreen to prevent screen flicker.
-  // When activeCount goes to 0 or changes, we erase card locations.
-  // To keep it simple, we draw/erase depending on active count.
-  zoneCount = 0;
+  // 3. Detect Layout changes to perform full redraw
+  bool layoutChanged = false;
+  if (activeCount != lastActiveCount || forceRedraw) {
+    layoutChanged = true;
+  } else {
+    for (int i = 0; i < activeCount; i++) {
+      if (activeIndices[i] != lastActiveIndices[i] ||
+          store.get(activeIndices[i]).checkedIn != lastCheckedIn[i]) {
+        layoutChanged = true;
+        break;
+      }
+    }
+  }
 
-  if (activeCount == 0) {
+  if (layoutChanged) {
+    // Clear screen below header
     tft.fillRect(0, 31, cfg.width, cfg.height - 31, COLOR_BG);
-    tft.drawRoundRect(20, 60, cfg.width - 40, 130, 8, COLOR_CARD_BORDER);
-    tft.setTextSize(2);
-    tft.setTextColor(COLOR_TEXT_MUTED);
-    tft.setCursor(65, 100);
-    tft.print("No Active Shifts");
-    tft.setTextSize(1);
-    tft.setCursor(60, 140);
-    tft.print("Waiting for scheduled shift hours");
-    return;
+    
+    // Save state cache
+    lastActiveCount = activeCount;
+    for (int i = 0; i < activeCount; i++) {
+      lastActiveIndices[i] = activeIndices[i];
+      lastCheckedIn[i] = store.get(activeIndices[i]).checkedIn;
+    }
+    forceRedraw = false;
+
+    // Reset offset cache to force full redraw of all text strings
+    for (int i = 0; i < 12; i++) {
+      lastOffsets[i] = 9999;
+    }
+
+    if (activeCount == 0) {
+      tft.drawRoundRect(20, 60, cfg.width - 40, 130, 8, COLOR_CARD_BORDER);
+      tft.setTextSize(2);
+      tft.setTextColor(COLOR_TEXT_MUTED);
+      tft.setCursor(65, 100);
+      tft.print("No Active Shifts");
+      tft.setTextSize(1);
+      tft.setCursor(60, 140);
+      tft.print("Waiting for scheduled shift hours");
+      return;
+    }
+
+    // Draw Static Card Frames & Buttons (No text lines)
+    zoneCount = 0;
+    for (int i = 0; i < activeCount; i++) {
+      Employee& emp = store.getMutable(activeIndices[i]);
+
+      int16_t cardX = 0, cardY = 0, cardW = 0, cardH = 0;
+      if (activeCount == 1) {
+        cardX = 20; cardY = 50; cardW = 280; cardH = 170;
+      } else if (activeCount == 2) {
+        cardX = 15 + i * 150; cardY = 50; cardW = 140; cardH = 170;
+      } else {
+        int row = i / 2;
+        int col = i % 2;
+        cardX = 15 + col * 150; cardY = 50 + row * 85; cardW = 140; cardH = 75;
+      }
+
+      // Save touch zones
+      zones[i].xMin = cardX;
+      zones[i].xMax = cardX + cardW;
+      zones[i].yMin = cardY;
+      zones[i].yMax = cardY + cardH;
+      zones[i].employeeIndex = activeIndices[i];
+      zoneCount++;
+
+      uint16_t bgCol = emp.checkedIn ? COLOR_CHECKED_IN_BG : COLOR_CARD_BG;
+      uint16_t borderCol = emp.checkedIn ? COLOR_CHECKED_IN_BORDER : COLOR_CARD_BORDER;
+
+      tft.fillRoundRect(cardX, cardY, cardW, cardH, 8, bgCol);
+      tft.drawRoundRect(cardX, cardY, cardW, cardH, 8, borderCol);
+
+      // Draw static buttons inside cards if 1 or 2 cards
+      if (activeCount == 1) {
+        int btnX = cardX + 30;
+        int btnY = cardY + 115;
+        int btnW = cardW - 60;
+        int btnH = 35;
+        uint16_t btnCol = emp.checkedIn ? COLOR_CARD_BG : COLOR_ACCENT;
+        tft.fillRoundRect(btnX, btnY, btnW, btnH, 6, btnCol);
+        tft.drawRoundRect(btnX, btnY, btnW, btnH, 6, COLOR_TEXT);
+        tft.setTextSize(1);
+        tft.setTextColor(COLOR_TEXT);
+        const char* btnText = emp.checkedIn ? "TAP TO CHECK OUT" : "TAP TO CHECK IN";
+        int textLen = strlen(btnText) * 6;
+        tft.setCursor(btnX + (btnW - textLen) / 2, btnY + 14);
+        tft.print(btnText);
+      } else if (activeCount == 2) {
+        int btnX = cardX + 10;
+        int btnY = cardY + 115;
+        int btnW = cardW - 20;
+        int btnH = 35;
+        uint16_t btnCol = emp.checkedIn ? COLOR_CARD_BG : COLOR_ACCENT;
+        tft.fillRoundRect(btnX, btnY, btnW, btnH, 6, btnCol);
+        tft.drawRoundRect(btnX, btnY, btnW, btnH, 6, COLOR_TEXT);
+        tft.setTextSize(1);
+        tft.setTextColor(COLOR_TEXT);
+        const char* btnText = emp.checkedIn ? "CHECK OUT" : "CHECK IN";
+        int textLen = strlen(btnText) * 6;
+        tft.setCursor(btnX + (btnW - textLen) / 2, btnY + 14);
+        tft.print(btnText);
+      } else { // 3 or 4
+        int badgeX = cardX + cardW - 38;
+        int badgeY = cardY + cardH - 18;
+        int badgeW = 30;
+        int badgeH = 12;
+        uint16_t badgeCol = emp.checkedIn ? COLOR_WIFI_OK : COLOR_CARD_BORDER;
+        tft.fillRoundRect(badgeX, badgeY, badgeW, badgeH, 3, badgeCol);
+        tft.setTextSize(1);
+        tft.setTextColor(COLOR_TEXT);
+        const char* badgeText = emp.checkedIn ? "IN" : "OUT";
+        int textLen = strlen(badgeText) * 6;
+        tft.setCursor(badgeX + (badgeW - textLen) / 2, badgeY + 2);
+        tft.print(badgeText);
+      }
+    }
   }
 
-  // 4. Render Layouts dynamically
+  // 4. Draw/Update the texts (Only redraws changing or scrolling marquee offsets)
   for (int i = 0; i < activeCount; i++) {
-    int empIdx = activeIndices[i];
-    Employee& emp = store.getMutable(empIdx);
+    Employee& emp = store.getMutable(activeIndices[i]);
 
     int16_t cardX = 0, cardY = 0, cardW = 0, cardH = 0;
-    
     if (activeCount == 1) {
       cardX = 20; cardY = 50; cardW = 280; cardH = 170;
     } else if (activeCount == 2) {
       cardX = 15 + i * 150; cardY = 50; cardW = 140; cardH = 170;
-    } else { // 3 or 4
+    } else {
       int row = i / 2;
       int col = i % 2;
       cardX = 15 + col * 150; cardY = 50 + row * 85; cardW = 140; cardH = 75;
     }
 
-    // Save zone for touch detection
-    zones[i].xMin = cardX;
-    zones[i].xMax = cardX + cardW;
-    zones[i].yMin = cardY;
-    zones[i].yMax = cardY + cardH;
-    zones[i].employeeIndex = empIdx;
-    zoneCount++;
-
-    // Color code based on check-in state
     uint16_t bgCol = emp.checkedIn ? COLOR_CHECKED_IN_BG : COLOR_CARD_BG;
-    uint16_t borderCol = emp.checkedIn ? COLOR_CHECKED_IN_BORDER : COLOR_CARD_BORDER;
 
-    tft.fillRoundRect(cardX, cardY, cardW, cardH, 8, bgCol);
-    tft.drawRoundRect(cardX, cardY, cardW, cardH, 8, borderCol);
-
-    // Draw card content
-    int maxTextWidth = cardW - 16;
-    
-    // Layout for 1 card (Large display)
     if (activeCount == 1) {
-      // Line 0: Employee Name
-      tft.setTextSize(2);
-      int nameWidth = emp.lines[0].length() * 12;
-      int offset = marquee.position(nameWidth, maxTextWidth, currentMs, 2000);
-      tft.setTextColor(COLOR_TEXT);
-      tft.setCursor(cardX + 8 + (offset < 0 ? offset : (maxTextWidth - nameWidth) / 2), cardY + 25);
-      tft.print(emp.lines[0]);
-
-      // Line 1: Position
-      tft.setTextSize(1);
-      int posWidth = emp.lines[1].length() * 6;
-      offset = marquee.position(posWidth, maxTextWidth, currentMs, 2000);
-      tft.setTextColor(COLOR_TEXT_MUTED);
-      tft.setCursor(cardX + 8 + (offset < 0 ? offset : (maxTextWidth - posWidth) / 2), cardY + 60);
-      tft.print(emp.lines[1]);
-
-      // Line 2: Shift Schedule
-      int timeWidth = emp.lines[2].length() * 6;
-      tft.setTextColor(COLOR_ACCENT);
-      tft.setCursor(cardX + 8 + (maxTextWidth - timeWidth) / 2, cardY + 85);
-      tft.print(emp.lines[2]);
-
-      // Draw Check-in Button inside the card
-      int btnX = cardX + 30;
-      int btnY = cardY + 115;
-      int btnW = cardW - 60;
-      int btnH = 35;
-      uint16_t btnCol = emp.checkedIn ? COLOR_CARD_BG : COLOR_ACCENT;
-      
-      tft.fillRoundRect(btnX, btnY, btnW, btnH, 6, btnCol);
-      tft.drawRoundRect(btnX, btnY, btnW, btnH, 6, COLOR_TEXT);
-      
-      tft.setTextSize(1);
-      tft.setTextColor(COLOR_TEXT);
-      const char* btnText = emp.checkedIn ? "TAP TO CHECK OUT" : "TAP TO CHECK IN";
-      int textLen = strlen(btnText) * 6;
-      tft.setCursor(btnX + (btnW - textLen) / 2, btnY + 14);
-      tft.print(btnText);
-      
-    } 
-    // Layout for 2 cards (Side-by-Side medium display)
-    else if (activeCount == 2) {
-      // Line 0: Employee Name
-      tft.setTextSize(1); // Set size 1 for smaller width
-      int nameWidth = emp.lines[0].length() * 6;
-      int offset = marquee.position(nameWidth, maxTextWidth, currentMs, 2000);
-      tft.setTextColor(COLOR_TEXT);
-      tft.setCursor(cardX + 8 + (offset < 0 ? offset : 0), cardY + 20);
-      tft.print(emp.lines[0]);
-
-      // Line 1: Position
-      int posWidth = emp.lines[1].length() * 6;
-      offset = marquee.position(posWidth, maxTextWidth, currentMs, 2000);
-      tft.setTextColor(COLOR_TEXT_MUTED);
-      tft.setCursor(cardX + 8 + (offset < 0 ? offset : 0), cardY + 50);
-      tft.print(emp.lines[1]);
-
-      // Line 2: Shift Schedule
-      tft.setTextColor(COLOR_ACCENT);
-      tft.setCursor(cardX + 8, cardY + 80);
-      tft.print(emp.lines[2]);
-
-      // Draw Check-in Button inside the card
-      int btnX = cardX + 10;
-      int btnY = cardY + 115;
-      int btnW = cardW - 20;
-      int btnH = 35;
-      uint16_t btnCol = emp.checkedIn ? COLOR_CARD_BG : COLOR_ACCENT;
-      
-      tft.fillRoundRect(btnX, btnY, btnW, btnH, 6, btnCol);
-      tft.drawRoundRect(btnX, btnY, btnW, btnH, 6, COLOR_TEXT);
-      
-      tft.setTextSize(1);
-      tft.setTextColor(COLOR_TEXT);
-      const char* btnText = emp.checkedIn ? "CHECK OUT" : "CHECK IN";
-      int textLen = strlen(btnText) * 6;
-      tft.setCursor(btnX + (btnW - textLen) / 2, btnY + 14);
-      tft.print(btnText);
-    } 
-    // Layout for 3 or 4 cards (2x2 grid view)
-    else {
-      // Line 0: Employee Name
-      tft.setTextSize(1);
-      int nameWidth = emp.lines[0].length() * 6;
-      int offset = marquee.position(nameWidth, maxTextWidth - 30, currentMs, 2000); // leave space for badge
-      tft.setTextColor(COLOR_TEXT);
-      tft.setCursor(cardX + 8 + (offset < 0 ? offset : 0), cardY + 12);
-      tft.print(emp.lines[0]);
-
-      // Line 1: Position
-      int posWidth = emp.lines[1].length() * 6;
-      offset = marquee.position(posWidth, maxTextWidth, currentMs, 2000);
-      tft.setTextColor(COLOR_TEXT_MUTED);
-      tft.setCursor(cardX + 8 + (offset < 0 ? offset : 0), cardY + 30);
-      tft.print(emp.lines[1]);
-
-      // Line 2: Shift Schedule
-      tft.setTextColor(COLOR_ACCENT);
-      tft.setCursor(cardX + 8, cardY + 48);
-      tft.print(emp.lines[2]);
-
-      // Draw Small Status Indicator Badge in bottom-right corner
-      int badgeX = cardX + cardW - 38;
-      int badgeY = cardY + cardH - 18;
-      int badgeW = 30;
-      int badgeH = 12;
-      uint16_t badgeCol = emp.checkedIn ? COLOR_WIFI_OK : COLOR_CARD_BORDER;
-      
-      tft.fillRoundRect(badgeX, badgeY, badgeW, badgeH, 3, badgeCol);
-      tft.setTextSize(1);
-      tft.setTextColor(COLOR_TEXT);
-      const char* badgeText = emp.checkedIn ? "IN" : "OUT";
-      int textLen = strlen(badgeText) * 6;
-      tft.setCursor(badgeX + (badgeW - textLen) / 2, badgeY + 2);
-      tft.print(badgeText);
+      drawCardLineHelper(tft, marquee, i, 0, emp.lines[0], 2, cardX, cardY, cardW, cardY + 25, bgCol, currentMs, lastOffsets);
+      drawCardLineHelper(tft, marquee, i, 1, emp.lines[1], 1, cardX, cardY, cardW, cardY + 60, bgCol, currentMs, lastOffsets);
+      drawCardLineHelper(tft, marquee, i, 2, emp.lines[2], 1, cardX, cardY, cardW, cardY + 85, bgCol, currentMs, lastOffsets);
+    } else if (activeCount == 2) {
+      drawCardLineHelper(tft, marquee, i, 0, emp.lines[0], 1, cardX, cardY, cardW, cardY + 20, bgCol, currentMs, lastOffsets);
+      drawCardLineHelper(tft, marquee, i, 1, emp.lines[1], 1, cardX, cardY, cardW, cardY + 50, bgCol, currentMs, lastOffsets);
+      drawCardLineHelper(tft, marquee, i, 2, emp.lines[2], 1, cardX, cardY, cardW, cardY + 80, bgCol, currentMs, lastOffsets);
+    } else {
+      drawCardLineHelper(tft, marquee, i, 0, emp.lines[0], 1, cardX, cardY, cardW, cardY + 12, bgCol, currentMs, lastOffsets);
+      drawCardLineHelper(tft, marquee, i, 1, emp.lines[1], 1, cardX, cardY, cardW, cardY + 30, bgCol, currentMs, lastOffsets);
+      drawCardLineHelper(tft, marquee, i, 2, emp.lines[2], 1, cardX, cardY, cardW, cardY + 48, bgCol, currentMs, lastOffsets);
     }
-
-    // 5. Visual Masking: Clean up text that bleeds out of the card limits due to scrolling.
-    // Mask inside margins (left/right) with the card's background color.
-    tft.fillRect(cardX + 1, cardY + 2, 7, cardH - 4, bgCol);
-    tft.fillRect(cardX + cardW - 8, cardY + 2, 7, cardH - 4, bgCol);
-
-    // Re-render rounded card borders to ensure they look sharp.
-    tft.drawRoundRect(cardX, cardY, cardW, cardH, 8, borderCol);
-  }
-
-  // Mask screen area outside cards to handle overflow bleeding
-  // Erase left edge margin of display
-  tft.fillRect(0, 31, 15, cfg.height - 31, COLOR_BG);
-  // Erase right edge margin of display
-  tft.fillRect(305, 31, 15, cfg.height - 31, COLOR_BG);
-  
-  if (activeCount == 2) {
-    // Erase area between the two cards
-    tft.fillRect(155, 31, 10, cfg.height - 31, COLOR_BG);
-  } else if (activeCount >= 3) {
-    // Erase center vertical and horizontal spacing channels
-    tft.fillRect(155, 31, 10, cfg.height - 31, COLOR_BG);
-    tft.fillRect(0, 125, cfg.width, 10, COLOR_BG);
   }
 }
 
 void UIManager::renderDebug(bool rtcOk, bool wifiOk, int rssi,
                            const String& ssid, const String& ip) {
-  // Header bar for debug screen
   tft.fillRect(0, 0, cfg.width, 30, COLOR_HEADER);
   tft.drawFastHLine(0, 30, cfg.width, COLOR_WIFI_ERR);
   
@@ -400,10 +454,8 @@ void UIManager::renderDebug(bool rtcOk, bool wifiOk, int rssi,
   tft.setCursor(15, 11);
   tft.print("[WIFI DIAGNOSTICS & SYSTEM STATUS]");
 
-  // Body background
   tft.fillRect(0, 31, cfg.width, cfg.height - 31, COLOR_BG);
 
-  // Diagnostic items
   int startY = 55;
   int lineSpacing = 28;
 
@@ -432,18 +484,314 @@ void UIManager::renderDebug(bool rtcOk, bool wifiOk, int rssi,
   drawDiagItem("Touch Controller:", "ONLINE", true);
 }
 
-void UIManager::handleTouch(int16_t x, int16_t y, EmployeeStore& store) {
-  for (int i = 0; i < zoneCount; i++) {
-    if (x >= zones[i].xMin && x <= zones[i].xMax &&
-        y >= zones[i].yMin && y <= zones[i].yMax) {
-      int idx = zones[i].employeeIndex;
-      if (idx >= 0 && idx < store.size()) {
-        Employee& emp = store.getMutable(idx);
-        emp.checkedIn = !emp.checkedIn;
-        Serial.printf("UI: Card touched. %s check-in status toggled to %s\r\n", 
-                      emp.lines[0].c_str(), emp.checkedIn ? "CHECKED IN" : "CHECKED OUT");
-        break;
+#if TOUCH_SCREEN_ENABLED
+
+// ── WiFi Settings Screen & Keyboard ──
+
+void UIManager::drawKey(int x, int y, int w, int h, const char* label, bool pressed) {
+  uint16_t keyBg = pressed ? COLOR_ACCENT : COLOR_CARD_BG;
+  uint16_t keyBorder = COLOR_CARD_BORDER;
+  tft.fillRoundRect(x, y, w, h, 4, keyBg);
+  tft.drawRoundRect(x, y, w, h, 4, keyBorder);
+  tft.setTextColor(COLOR_TEXT);
+  tft.setTextSize(1);
+  int labelLen = strlen(label) * 6;
+  tft.setCursor(x + (w - labelLen) / 2, y + (h - 8) / 2);
+  tft.print(label);
+}
+
+void UIManager::drawWifiSettingsScreen() {
+  if (!forceRedraw) return;
+  forceRedraw = false;
+
+  // Header
+  tft.fillRect(0, 0, cfg.width, 30, COLOR_HEADER);
+  tft.drawFastHLine(0, 30, cfg.width, COLOR_ACCENT);
+  tft.setTextColor(COLOR_TEXT);
+  tft.setTextSize(1);
+  tft.setCursor(10, 11);
+  tft.print("WiFi Network Settings");
+  
+  // Close / Exit button in header
+  tft.drawRoundRect(cfg.width - 50, 4, 40, 22, 4, COLOR_ACCENT);
+  tft.setCursor(cfg.width - 43, 11);
+  tft.print("EXIT");
+
+  // Body background
+  tft.fillRect(0, 31, cfg.width, 89, COLOR_BG);
+
+  // Input Fields
+  tft.setTextColor(COLOR_TEXT_MUTED);
+  tft.setCursor(10, 42);
+  tft.print("SSID: ");
+  tft.fillRect(50, 35, 260, 16, activeInputField == 0 ? COLOR_CHECKED_IN_BG : COLOR_CARD_BG);
+  tft.drawRect(50, 35, 260, 16, activeInputField == 0 ? COLOR_ACCENT : COLOR_CARD_BORDER);
+  tft.setTextColor(COLOR_TEXT);
+  tft.setCursor(55, 39);
+  tft.print(wifiInputSsid);
+  if (activeInputField == 0 && (millis() / 500) % 2 == 0) tft.print("|"); // Blinking cursor
+
+  tft.setTextColor(COLOR_TEXT_MUTED);
+  tft.setCursor(10, 67);
+  tft.print("PASS: ");
+  tft.fillRect(50, 60, 260, 16, activeInputField == 1 ? COLOR_CHECKED_IN_BG : COLOR_CARD_BG);
+  tft.drawRect(50, 60, 260, 16, activeInputField == 1 ? COLOR_ACCENT : COLOR_CARD_BORDER);
+  tft.setTextColor(COLOR_TEXT);
+  tft.setCursor(55, 64);
+  // Obfuscate password showing dots
+  String dots = "";
+  for (size_t i = 0; i < wifiInputPass.length(); i++) dots += "*";
+  tft.print(dots);
+  if (activeInputField == 1 && (millis() / 500) % 2 == 0) tft.print("|"); // Blinking cursor
+
+  // Scanned Networks List (Y = 85 to 115)
+  tft.setTextColor(COLOR_TEXT_MUTED);
+  tft.setTextSize(1);
+  tft.setCursor(10, 93);
+  tft.print("Scanned:");
+
+  if (isScanning) {
+    tft.setCursor(75, 93);
+    tft.print("Scanning WiFi networks...");
+  } else if (scannedCount == 0) {
+    tft.setCursor(75, 93);
+    tft.print("No networks found (Tap to scan)");
+  } else {
+    for (int i = 0; i < scannedCount && i < 3; i++) {
+      int btnX = 70 + i * 82;
+      tft.fillRoundRect(btnX, 85, 78, 18, 3, COLOR_CARD_BG);
+      tft.drawRoundRect(btnX, 85, 78, 18, 3, COLOR_CARD_BORDER);
+      tft.setTextColor(COLOR_TEXT);
+      tft.setCursor(btnX + 4, 90);
+      
+      // Truncate SSID if it's too long
+      String s = scannedSsids[i];
+      if (s.length() > 11) s = s.substring(0, 9) + "..";
+      tft.print(s);
+    }
+  }
+
+  // Draw Keyboard
+  drawKeyboard();
+}
+
+void UIManager::drawKeyboard() {
+  tft.fillRect(0, 120, cfg.width, 120, COLOR_HEADER);
+  tft.drawFastHLine(0, 120, cfg.width, COLOR_CARD_BORDER);
+
+  const char* qwertyNormal[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l",
+    "z", "x", "c", "v", "b", "n", "m"
+  };
+  const char* qwertyShift[] = {
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L",
+    "Z", "X", "C", "V", "B", "N", "M"
+  };
+  const char* qwertySymbols[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
+    "-", "/", ":", ";", "(", ")", "$", "&", "@",
+    "_", ".", ",", "?", "!", "'", "\""
+  };
+
+  const char** keys = keyboardSymbols ? qwertySymbols : (keyboardShift ? qwertyShift : qwertyNormal);
+
+  // Row 0: 10 keys (Y = 124)
+  for (int i = 0; i < 10; i++) {
+    drawKey(4 + i * 31, 124, 28, 22, keys[i]);
+  }
+
+  // Row 1: 9 keys (Y = 152)
+  for (int i = 0; i < 9; i++) {
+    drawKey(20 + i * 31, 152, 28, 22, keys[10 + i]);
+  }
+
+  // Row 2: Shift, 7 keys, Backspace (Y = 180)
+  // Shift Key
+  drawKey(4, 180, 36, 22, keyboardSymbols ? "#+=" : (keyboardShift ? "CAPS" : "caps"), keyboardShift);
+  // 7 Keys (indices 19 to 25)
+  for (int i = 0; i < 7; i++) {
+    drawKey(45 + i * 31, 180, 28, 22, keys[19 + i]);
+  }
+  // Backspace
+  drawKey(267, 180, 49, 22, "BACK");
+
+  // Row 3: Mode, Space, Clear, Connect (Y = 208)
+  drawKey(4, 208, 44, 22, keyboardSymbols ? "abc" : "?123");
+  drawKey(53, 208, 140, 22, "SPACE");
+  drawKey(198, 208, 44, 22, "CLR");
+  drawKey(247, 208, 69, 22, "CONNECT", true);
+}
+
+void UIManager::handleKeyboardTouch(int16_t x, int16_t y) {
+  const char* qwertyNormal[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l",
+    "z", "x", "c", "v", "b", "n", "m"
+  };
+  const char* qwertyShift[] = {
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L",
+    "Z", "X", "C", "V", "B", "N", "M"
+  };
+  const char* qwertySymbols[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
+    "-", "/", ":", ";", "(", ")", "$", "&", "@",
+    "_", ".", ",", "?", "!", "'", "\""
+  };
+
+  const char** keys = keyboardSymbols ? qwertySymbols : (keyboardShift ? qwertyShift : qwertyNormal);
+
+  String* activeInput = (activeInputField == 0) ? &wifiInputSsid : &wifiInputPass;
+
+  // Row 0
+  if (y >= 124 && y < 146) {
+    int idx = (x - 4) / 31;
+    if (idx >= 0 && idx < 10) {
+      activeInput->concat(keys[idx]);
+      forceRedraw = true;
+    }
+  }
+  // Row 1
+  else if (y >= 152 && y < 174) {
+    int idx = (x - 20) / 31;
+    if (idx >= 0 && idx < 9) {
+      activeInput->concat(keys[10 + idx]);
+      forceRedraw = true;
+    }
+  }
+  // Row 2: Shift (caps), 7 keys, Backspace
+  else if (y >= 180 && y < 202) {
+    if (x >= 4 && x < 40) {
+      keyboardShift = !keyboardShift;
+      forceRedraw = true;
+    } else if (x >= 45 && x < 262) {
+      int idx = (x - 45) / 31;
+      if (idx >= 0 && idx < 7) {
+        activeInput->concat(keys[19 + idx]);
+        forceRedraw = true;
+      }
+    } else if (x >= 267 && x < 316) {
+      // Backspace
+      if (activeInput->length() > 0) {
+        *activeInput = activeInput->substring(0, activeInput->length() - 1);
+        forceRedraw = true;
       }
     }
   }
+  // Row 3: Mode, Space, Clear, Connect
+  else if (y >= 208 && y < 230) {
+    if (x >= 4 && x < 48) {
+      keyboardSymbols = !keyboardSymbols;
+      forceRedraw = true;
+    } else if (x >= 53 && x < 193) {
+      // Space
+      activeInput->concat(" ");
+      forceRedraw = true;
+    } else if (x >= 198 && x < 242) {
+      // Clear
+      *activeInput = "";
+      forceRedraw = true;
+    } else if (x >= 247 && x < 316) {
+      // Connect!
+      Preferences prefs;
+      prefs.begin("wifi-config", false);
+      prefs.putString("ssid", wifiInputSsid);
+      prefs.putString("password", wifiInputPass);
+      prefs.end();
+      
+      Serial.println("Saved custom WiFi to Preferences");
+      shouldReconnectWifi = true;
+      setMode(SCREEN_NORMAL);
+    }
+  }
 }
+
+void UIManager::handleTouch(int16_t x, int16_t y, EmployeeStore& store) {
+  // ── Mode Toggle / Close Touch Zones ──
+  if (currentMode == SCREEN_NORMAL) {
+    // Tap WiFi icon to configure WiFi Settings
+    if (x >= 280 && y <= 30) {
+      setMode(SCREEN_WIFI_SETTINGS);
+      triggerScan();
+      return;
+    }
+
+    // Tap employee cards to toggle check-in state
+    for (int i = 0; i < zoneCount; i++) {
+      if (x >= zones[i].xMin && x <= zones[i].xMax &&
+          y >= zones[i].yMin && y <= zones[i].yMax) {
+        int idx = zones[i].employeeIndex;
+        if (idx >= 0 && idx < store.size()) {
+          Employee& emp = store.getMutable(idx);
+          emp.checkedIn = !emp.checkedIn;
+          Serial.printf("UI: Toggled check-in for %s: %s\r\n", emp.lines[0].c_str(), emp.checkedIn ? "IN" : "OUT");
+          break;
+        }
+      }
+    }
+  } 
+  
+  else if (currentMode == SCREEN_WIFI_SETTINGS) {
+    // Exit button in header
+    if (x >= cfg.width - 55 && y <= 30) {
+      setMode(SCREEN_NORMAL);
+      return;
+    }
+
+    // Select Input Fields
+    if (y >= 35 && y < 51) {
+      activeInputField = 0;
+      forceRedraw = true;
+    } else if (y >= 60 && y < 76) {
+      activeInputField = 1;
+      forceRedraw = true;
+    }
+    
+    // Scanned Networks buttons (Y = 85..103)
+    else if (y >= 85 && y < 103) {
+      for (int i = 0; i < scannedCount && i < 3; i++) {
+        int btnX = 70 + i * 82;
+        if (x >= btnX && x < btnX + 78) {
+          wifiInputSsid = scannedSsids[i];
+          activeInputField = 1; // switch focus to password
+          forceRedraw = true;
+          break;
+        }
+      }
+    }
+
+    // Keyboard touch
+    else if (y >= 120) {
+      handleKeyboardTouch(x, y);
+    }
+  }
+}
+
+void UIManager::triggerScan() {
+  if (isScanning) return;
+  Serial.println("WiFi: Starting asynchronous network scan...");
+  scannedCount = 0;
+  isScanning = true;
+  scanStartTime = millis();
+  WiFi.scanNetworks(true); // Asynchronous scan
+}
+
+void UIManager::updateScanResults() {
+  isScanning = false;
+  int n = WiFi.scanComplete();
+  if (n >= 0) {
+    scannedCount = n < 3 ? n : 3;
+    for (int i = 0; i < scannedCount; i++) {
+      scannedSsids[i] = WiFi.SSID(i);
+      Serial.printf("WiFi: Found SSID: %s\r\n", scannedSsids[i].c_str());
+    }
+  } else {
+    scannedCount = 0;
+  }
+  WiFi.scanDelete();
+  forceRedraw = true;
+}
+
+#endif
