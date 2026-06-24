@@ -3,7 +3,7 @@
 
 #include "config.h"
 
-class DisplayRenderer;
+class UIManager;
 
 class WifiManager {
   const char* ssid;
@@ -16,7 +16,7 @@ class WifiManager {
 public:
   WifiManager(const char* ssid, const char* pass, uint16_t retry, uint16_t attempt, uint8_t max);
 
-  bool connect(DisplayRenderer& display);
+  bool connect(UIManager& ui);
   bool isConnected() const;
   int rssi() const;
   String ip() const;

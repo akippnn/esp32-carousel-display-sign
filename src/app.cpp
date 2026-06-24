@@ -6,10 +6,12 @@
 #include <ArduinoJson.h>
 
 App::App()
-  : gfx(U8G2_R0, cfg.pinClk, cfg.pinData, cfg.pinCs, cfg.pinReset),
+  : spiBus(VSPI),
+    display(cfg, &spiBus),
+    touch(cfg),
+    ui(display.getTft(), cfg),
     rtc(cfg.rtcData, cfg.rtcClk, cfg.rtcRst),
     wifi(WIFI_SSID, WIFI_PASSWORD, cfg.wifiRetryMs, cfg.wifiAttemptMs, cfg.wifiMaxAttempts),
-    renderer(gfx, cfg),
     supabase(SUPABASE_URL, SUPABASE_KEY, SupabaseFieldMapping(), SUPABASE_FETCH_INTERVAL),
     server(nullptr) {}
 
@@ -20,8 +22,15 @@ void App::setup() {
 
   server = new WebServer(80);
 
-  renderer.begin();
-  wifi.connect(renderer);
+  // Initialize Custom Hardware SPI via GPIO matrix routing
+  spiBus.begin(cfg.pinClk, cfg.pinMiso, cfg.pinMosi, -1);
+
+  // Initialize display, touch, and UI components
+  display.begin();
+  touch.begin(spiBus);
+  ui.begin();
+
+  wifi.connect(ui);
 
   bool rtcOk = rtc.begin();
   Serial.println(rtcOk ? "RTC OK" : "WARNING: RTC not responding — check wiring / battery");
@@ -34,6 +43,15 @@ void App::loop() {
   server->handleClient();
 
   unsigned long now = millis();
+
+  // Non-blocking touch polling
+  if (touch.poll()) {
+    TouchPoint pt = touch.getTouchPoint();
+    if (pt.touched) {
+      ui.handleTouch(pt.x, pt.y, employees);
+      lastRefresh = 0; // Force immediate screen refresh
+    }
+  }
 
   wifi.poll();
   fetchEmployees(now);
@@ -92,8 +110,13 @@ void App::handleSerial() {
 
 void App::fetchEmployees(unsigned long now) {
   if (!supabase.shouldFetch(now)) return;
-  supabase.markFetched(now);
-  supabase.fetch(employees, MAX_EMPLOYEES);
+  if (supabase.fetch(employees, MAX_EMPLOYEES)) {
+    supabase.markFetched(now);
+    Serial.println("Employee data updated successfully");
+  } else {
+    supabase.markFailed(now);
+    Serial.println("Supabase fetch failed, will retry soon");
+  }
 }
 
 void App::runDisplay(unsigned long now) {
@@ -105,35 +128,12 @@ void App::runDisplay(unsigned long now) {
   int rssi = wifiOk ? wifi.rssi() : 0;
 
   if (debugMode) {
-    renderer.renderDebug(rtcOk, wifiOk, rssi, WIFI_SSID, wifi.ip());
+    ui.renderDebug(rtcOk, wifiOk, rssi, WIFI_SSID, wifi.ip());
     return;
   }
 
   RtcDateTime rtcNow(2024, 1, 1, 0, 0, 0);
   if (rtcOk) rtcNow = rtc.now();
 
-  String lines[3] = {"Loading...", "Waiting for data", ""};
-
-  if (!employees.empty()) {
-    int matches[MAX_EMPLOYEES];
-    int matchCount = 0;
-
-    if (rtcOk) {
-      uint8_t today = rtcNow.Day();
-      uint16_t nowMin = rtcNow.Hour() * 60 + rtcNow.Minute();
-      matchCount = employees.collectActive(today, nowMin, matches, MAX_EMPLOYEES);
-    }
-
-    if (matchCount > 0) {
-      int idx = matches[(now / cfg.rotationMs) % matchCount];
-      const Employee& e = employees.get(idx);
-      for (int i = 0; i < 3; i++) lines[i] = e.lines[i];
-    } else {
-      lines[0] = "No one scheduled";
-      lines[1] = "";
-      lines[2] = "";
-    }
-  }
-
-  renderer.renderNormal(rtcOk, rtcOk ? &rtcNow : nullptr, lines, now, wifiOk, rssi, WIFI_SSID);
+  ui.renderNormal(rtcOk, rtcOk ? &rtcNow : nullptr, employees, now, wifiOk, rssi);
 }

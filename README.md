@@ -2,24 +2,28 @@
 
 ESP32-powered LCD sign that shows employee schedules pulled from a Supabase REST API. Uses an ST7920 128x64 display and DS1302 RTC.
 
-## Hardware
+> [!NOTE]
+> **Legacy Hardware (ST7920):** The older version of this project configured for the monochrome ST7920 display (128x64) is preserved in the `ST7920` branch.
 
-### ST7920 LCD (Software SPI)
+## Hardware Configuration
 
-| Pin | GPIO |
-|-----|------|
-| CLK | 23 |
-| DAT | 22 |
-| CS  | 21 |
-| RST | 4 |
+The current version uses a 3.2" color ILI9341 TFT display with an integrated XPT2046 resistive touch controller, alongside the DS1302 Real-Time Clock. All SPI devices share the clock and MOSI lines, mapped via the ESP32 GPIO matrix.
 
-### DS1302 RTC (ThreeWire)
+### ESP32 Pin Map
 
-| Pin | GPIO |
-|-----|------|
-| DAT | 18 |
-| CLK | 19 |
-| RST | 5 |
+| Subsystem | Signal Name | ESP32 GPIO | Header Pin | Description |
+| :--- | :--- | :---: | :---: | :--- |
+| **SPI Bus (Shared)** | `SPI_CLK` | **IO5** | J2_10 | Shared clock line (TFT_SCK & T_CLK bridged at header) |
+| | `SPI_MOSI` | **IO17** | J2_11 | Shared data out line (TFT_MOSI & T_DIN bridged at header) |
+| | `T_DO` (MISO) | **IO26** | J1_10 | Shared data in line (used by Touch Controller) |
+| **ILI9341 TFT** | `TFT_CS` | **IO15** | J2_16 | TFT Chip Select |
+| | `TFT_DC` | **IO4** | J2_13 | TFT Data/Command Control |
+| | `TFT_RST` | **IO2** | J2_15 | TFT Hardware Reset |
+| **XPT2046 Touch** | `T_CS` | **IO27** | J1_11 | Touch Controller Chip Select |
+| | `T_IRQ` | **IO35** | J1_6 | Touch Interrupt (goes LOW when screen is touched) |
+| **DS1302 RTC** | `RTC_CLK` | **IO25** | J1_9 | RTC Serial Clock |
+| | `RTC_RST` | **IO32** | J1_7 | RTC Reset / Chip Enable |
+| | `RTC_DAT` | **IO33** | J1_8 | RTC ThreeWire I/O Data Line |
 
 ## Quick Start
 

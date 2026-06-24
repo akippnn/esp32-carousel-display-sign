@@ -85,9 +85,14 @@ bool SupabaseClient::fetch(EmployeeStore& store, int max) {
 }
 
 bool SupabaseClient::shouldFetch(unsigned long now) const {
+  if (lastFetch == 0) return true;
   return now - lastFetch >= interval;
 }
 
 void SupabaseClient::markFetched(unsigned long now) {
   lastFetch = now;
+}
+
+void SupabaseClient::markFailed(unsigned long now) {
+  lastFetch = now - interval + 5000;
 }

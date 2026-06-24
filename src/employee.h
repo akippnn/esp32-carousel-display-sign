@@ -9,6 +9,7 @@ struct Employee {
   uint8_t scheduleDay = 0;
   uint16_t startMin = 0;
   uint16_t endMin = 0;
+  bool checkedIn = false;
 
   bool isActive(uint8_t today, uint16_t nowMin) const {
     return scheduleDay == today && nowMin >= startMin && nowMin < endMin;
@@ -25,6 +26,7 @@ public:
   int size() const { return count; }
   bool empty() const { return count == 0; }
   const Employee& get(int i) const;
+  Employee& getMutable(int i) { return data[i]; }
   int collectActive(uint8_t today, uint16_t nowMin, int* out, int max) const;
 };
 

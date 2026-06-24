@@ -17,6 +17,7 @@ public:
   bool fetch(EmployeeStore& store, int max);
   bool shouldFetch(unsigned long now) const;
   void markFetched(unsigned long now);
+  void markFailed(unsigned long now);
 };
 
 #endif

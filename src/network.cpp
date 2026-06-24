@@ -2,14 +2,14 @@
 #include <WiFiClient.h>
 #include <WiFiServer.h>
 #include "network.h"
-#include "display.h"
+#include "ui.h"
 #include <esp_wifi.h>
 
 WifiManager::WifiManager(const char* s, const char* p, uint16_t retry, uint16_t attempt, uint8_t max)
   : ssid(s), password(p), retryMs(retry), attemptMs(attempt), maxAttempts(max) {}
 
-bool WifiManager::connect(DisplayRenderer& display) {
-  display.bootScreen("Connecting to WiFi...", ssid);
+bool WifiManager::connect(UIManager& ui) {
+  ui.bootScreen("Connecting to WiFi...", ssid);
 
   if (password == nullptr || strlen(password) == 0) {
     WiFi.begin(ssid);
@@ -21,7 +21,7 @@ bool WifiManager::connect(DisplayRenderer& display) {
   while (WiFi.status() != WL_CONNECTED && attempt < maxAttempts) {
     delay(attemptMs);
     attempt++;
-    display.wifiProgress(attempt, maxAttempts);
+    ui.wifiProgress(attempt, maxAttempts);
     Serial.print(".");
   }
 
@@ -32,7 +32,7 @@ bool WifiManager::connect(DisplayRenderer& display) {
     Serial.printf("Connected to %s, IP: %s\r\n", ssid, ip().c_str());
   }
 
-  display.wifiResult(isConnected(), ip().c_str(), rssi());
+  ui.wifiResult(isConnected(), ip().c_str(), rssi());
   delay(1500);
   return isConnected();
 }

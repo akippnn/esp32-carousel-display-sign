@@ -3,6 +3,8 @@
 
 #include "config.h"
 #include "display.h"
+#include "touch.h"
+#include "ui.h"
 #include "network.h"
 #include "rtc.h"
 #include "employee.h"
@@ -12,10 +14,12 @@ class WebServer;
 
 class App {
   DisplayConfig cfg;
-  U8G2_ST7920_128X64_F_SW_SPI gfx;
+  SPIClass spiBus;
+  DisplayDriver display;
+  TouchManager touch;
+  UIManager ui;
   RtcManager rtc;
   WifiManager wifi;
-  DisplayRenderer renderer;
   EmployeeStore employees;
   SupabaseClient supabase;
   WebServer* server;
