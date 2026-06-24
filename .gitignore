@@ -1,0 +1,18 @@
+# Credentials — never commit
+.env
+
+# PlatformIO build artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Build artifacts
+build/
+build-cache/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

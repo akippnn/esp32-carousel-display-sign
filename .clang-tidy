@@ -1,0 +1,29 @@
+---
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -readability-uppercase-literal-suffix,
+  -readability-magic-numbers,
+  -readability-convert-member-functions-to-static,
+  -readability-identifier-length,
+  -readability-named-parameter,
+  -readability-redundant-access-specifiers,
+  -readability-else-after-return,
+  -readability-function-cognitive-complexity,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-assignment-in-if-condition,
+
+WarningsAsErrors: >
+  clang-analyzer-*,
+  performance-*,
+
+HeaderFilterRegex: '.*'
+AnalyzeTemporaryDtors: false
+FormatStyle: file
+...
