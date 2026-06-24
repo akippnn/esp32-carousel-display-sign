@@ -2,6 +2,7 @@
 .env
 src/env_credentials.h
 *.json
+!.commitlintrc.json
 
 # PlatformIO build artifacts
 .pio/
