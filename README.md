@@ -1,6 +1,6 @@
 # ESP32 OJT Display Sign
 
-ESP32-powered LCD sign that shows employee schedules pulled from a Supabase REST API. Uses an ST7920 128x64 display and DS1302 RTC.
+ESP32-powered TFT sign that shows employee schedules pulled from Supabase or Firebase (with secure Google Service Account OAuth2). Uses a 3.2" color ILI9341 TFT display, optional touchscreen, and a DS1302 RTC.
 
 > [!NOTE]
 > **Legacy Hardware (ST7920):** The older version of this project configured for the monochrome ST7920 display (128x64) is preserved in the `ST7920` branch.
@@ -40,10 +40,19 @@ All secrets go in `.env` (never committed). See `.example.env` for all available
 ```bash
 WIFI_SSID=YourNetwork
 WIFI_PASSWORD=YourPassword
+DATABASE_PROVIDER=firebase   # 'supabase' or 'firebase'
+TOUCH_SCREEN_ENABLED=true    # set to false to compile out touch screen logic
+
+# Supabase Credentials (if DATABASE_PROVIDER=supabase)
 SUPABASE_URL=https://your-project.supabase.co/rest/v1/Employees
 SUPABASE_KEY=your_key
 
-# Optional: override Supabase column names (defaults match the schema)
+# Firebase Credentials (if DATABASE_PROVIDER=firebase)
+FIREBASE_URL=https://your-project-default-rtdb.firebaseio.com/employees
+FIREBASE_CLIENT_EMAIL=your-service-account-email@your-project.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEv...-----END PRIVATE KEY-----\n"
+
+# Optional: override database column mappings (defaults match standard schema)
 # SUPABASE_FIELD_FIRST_NAME=first_name
 # SUPABASE_FIELD_LAST_NAME=last_name
 # SUPABASE_FIELD_POSITION=position
@@ -51,7 +60,7 @@ SUPABASE_KEY=your_key
 # SUPABASE_FIELD_END=schedule_end
 ```
 
-The device connects to Wi-Fi on boot, fetches employee schedules from Supabase every 30s, and rotates through them on the LCD.
+The device connects to Wi-Fi on boot, performs Google Service Account OAuth2 token exchange (if using Firebase), fetches employee schedules every 30s, and rotates through them on the TFT screen.
 
 ## HTTP API
 
@@ -94,7 +103,8 @@ cd emulator && mkdir build && cd build && cmake .. && make && ./emulator
 │   ├── network.h/cpp   # WifiManager (connect, reconnect)
 │   ├── rtc.h/cpp       # RtcManager (DS1302 wrapper)
 │   ├── employee.h/cpp  # Employee struct + EmployeeStore
-│   └── supabase.h/cpp  # SupabaseClient (HTTPS fetch + parse)
+│   ├── supabase.h/cpp  # SupabaseClient (HTTPS fetch + parse)
+│   └── firebase.h/cpp  # FirebaseClient (HTTPS fetch + OAuth2 + mbedtls RS256 signing)
 ├── emulator/           # SDL testbed
 ├── scripts/            # flash.sh, load_env.py
 ├── u8g2/               # Graphics lib (submodule)
