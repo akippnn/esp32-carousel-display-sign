@@ -7,7 +7,7 @@ ESP32-powered TFT sign that shows employee schedules pulled from Supabase or Fir
 
 ## Hardware Configuration
 
-The current version uses a 3.2" color ILI9341 TFT display with an integrated XPT2046 resistive touch controller, alongside the DS1302 Real-Time Clock. All SPI devices share the clock and MOSI lines, mapped via the ESP32 GPIO matrix.
+The current version uses a 3.2" color ILI9341 TFT display with an integrated XPT2046 resistive touch controller (touchscreen is currently untested), alongside the DS1302 Real-Time Clock. All SPI devices share the clock and MOSI lines, mapped via the ESP32 GPIO matrix.
 
 ### ESP32 Pin Map
 
