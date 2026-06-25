@@ -52,8 +52,7 @@ def generate_header(env):
 
     if ssid:
         content += '#define WIFI_SSID "{}"\n'.format(c_escape(ssid))
-    if password:
-        content += '#define WIFI_PASSWORD "{}"\n'.format(c_escape(password))
+    content += '#define WIFI_PASSWORD "{}"\n'.format(c_escape(password))
     if url:
         content += '#define SUPABASE_URL "{}"\n'.format(c_escape(url))
     if key:
